@@ -36,8 +36,8 @@ namespace Community.PowerToys.Run.Plugin.CurrencyConverter
         private string _aliasFileLocation;
 
         // Constants
-        private const int CacheExpirationHours = 3;
-        private const bool EnableLog = false;
+        private const int CacheExpirationHours = 1;
+        private const bool EnableLog = true;
         private const string AliasFileName = "alias.json";
         private const string DefaultAliasResourceName = "Community.PowerToys.Run.Plugin.CurrencyConverter.alias.default.json";
         private const string GithubReadmeURL = "https://github.com/Advaith3600/PowerToys-Run-Currency-Converter?tab=readme-ov-file#aliasing";
@@ -132,62 +132,69 @@ namespace Community.PowerToys.Run.Plugin.CurrencyConverter
 
         private double GetConversionRateSync(string fromCurrency, string toCurrency)
         {
-            var USDisFrom = fromCurrency == "USD" || fromCurrency == "USDT";
-            var USDisTo = toCurrency == "USD" || toCurrency == "USDT";
+            var USDisFrom = fromCurrency == "usd" || fromCurrency == "usdt";
+            var USDisTo = toCurrency == "usd" || toCurrency == "usdt";
+            var cacheKey = "bp-" + toCurrency + "-" + toCurrency;
 
             if (USDisFrom || USDisTo)
             {
+                if (EnableLog) Log.Info("USD currency found, trying BP API for: " + cacheKey, GetType());
+
                 var maybeNonUSD = USDisFrom ? toCurrency : fromCurrency;
 
-                if (_conversionCache.TryGetValue("BPUSDT", out var cachedData) && cachedData.Timestamp > DateTime.Now.AddHours(-CacheExpirationHours))
+                if (_conversionCache.TryGetValue(cacheKey, out var cachedDataBP) && cachedDataBP.Timestamp > DateTime.Now.AddHours(-CacheExpirationHours))
                 {
-                    if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Found it from the cache", GetType());
-
-                    var fromCurrencyElement = cachedData.Rates.EnumerateArray().FirstOrDefault(x => x.GetProperty("code").GetString() == maybeNonUSD);
-                    if (fromCurrencyElement != null)
+                    if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | BP: Found the cache", GetType());
+                    if (USDisFrom)
                     {
+                        return cachedDataBP.Rates.GetDouble();
+                    }
+                    else
+                    {
+                        return 1 / cachedDataBP.Rates.GetDouble();
+                    }
+                }
+
+                if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | BP: Trying to fetch", GetType());
+
+
+                var bpUrl = $"https://bitpay.com/rates/USDT";
+                var bpResponse = _httpClient.GetAsync(bpUrl).Result;
+
+                if (bpResponse.IsSuccessStatusCode)
+                {
+                    if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | BP: Fetched from API", GetType());
+
+                    var bpContent = bpResponse.Content.ReadAsStringAsync().Result;
+                    var bpElement = JsonDocument.Parse(bpContent).RootElement.GetProperty("data");
+
+                    var fromCurrencyElement = bpElement.EnumerateArray().FirstOrDefault(x => x.GetProperty("code").GetString() == maybeNonUSD.ToUpper());
+                    if (fromCurrencyElement.ValueKind != JsonValueKind.Undefined)
+                    {
+                        var rate = fromCurrencyElement.GetProperty("rate");
+                        _conversionCache[cacheKey] = (rate, DateTime.Now);
                         if (USDisFrom)
                         {
-                            return 1 / fromCurrencyElement.GetProperty("rate").GetDouble();
+                            return rate.GetDouble();
                         }
                         else
                         {
-                            return fromCurrencyElement.GetProperty("rate").GetDouble();
+                            return 1 / rate.GetDouble();
                         }
                     }
-                    throw new Exception($"{toCurrency.ToUpper()} is not a valid currency");
-                }
-
-                if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Trying to fetch via BitPay", GetType());
-
-
-                var url = $"https://bitpay.com/rates/USDT";
-                var response = _httpClient.GetAsync(url).Result;
-
-                if (response.IsSuccessStatusCode)
-                {
-                    if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Fetched from API", GetType());
-
-                    var content = response.Content.ReadAsStringAsync().Result;
-                    var element = JsonDocument.Parse(content).RootElement.GetProperty("data");
-                    _conversionCache["BPUSDT"] = (element, DateTime.Now);
-
-                    var fromCurrencyElement = element.EnumerateArray().FirstOrDefault(x => x.GetProperty("code").GetString() == maybeNonUSD);
-                    if (fromCurrencyElement != null)
+                    else
                     {
-                        if (USDisFrom)
-                        {
-                            return 1 / fromCurrencyElement.GetProperty("rate").GetDouble();
-                        }
-                        else
-                        {
-                            return fromCurrencyElement.GetProperty("rate").GetDouble();
-                        }
+                        if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | BP: Currenncy not found", GetType());
                     }
                 }
+                else
+                {
+                    if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | BP: Response not successful", GetType());
+                }
+
+                if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Failed from BP. Trying normal API...", GetType());
             }
 
-            if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Failed from BitPay, trying fallback", GetType());
 
             if (_conversionCache.TryGetValue(fromCurrency, out var cachedData) &&
                 cachedData.Timestamp > DateTime.Now.AddHours(-CacheExpirationHours))
