@@ -132,6 +132,63 @@ namespace Community.PowerToys.Run.Plugin.CurrencyConverter
 
         private double GetConversionRateSync(string fromCurrency, string toCurrency)
         {
+            var USDisFrom = fromCurrency == "USD" || fromCurrency == "USDT";
+            var USDisTo = toCurrency == "USD" || toCurrency == "USDT";
+
+            if (USDisFrom || USDisTo)
+            {
+                var maybeNonUSD = USDisFrom ? toCurrency : fromCurrency;
+
+                if (_conversionCache.TryGetValue("BPUSDT", out var cachedData) && cachedData.Timestamp > DateTime.Now.AddHours(-CacheExpirationHours))
+                {
+                    if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Found it from the cache", GetType());
+
+                    var fromCurrencyElement = cachedData.Rates.EnumerateArray().FirstOrDefault(x => x.GetProperty("code").GetString() == maybeNonUSD);
+                    if (fromCurrencyElement != null)
+                    {
+                        if (USDisFrom)
+                        {
+                            return 1 / fromCurrencyElement.GetProperty("rate").GetDouble();
+                        }
+                        else
+                        {
+                            return fromCurrencyElement.GetProperty("rate").GetDouble();
+                        }
+                    }
+                    throw new Exception($"{toCurrency.ToUpper()} is not a valid currency");
+                }
+
+                if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Trying to fetch via BitPay", GetType());
+
+
+                var url = $"https://bitpay.com/rates/USDT";
+                var response = _httpClient.GetAsync(url).Result;
+
+                if (response.IsSuccessStatusCode)
+                {
+                    if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Fetched from API", GetType());
+
+                    var content = response.Content.ReadAsStringAsync().Result;
+                    var element = JsonDocument.Parse(content).RootElement.GetProperty("data");
+                    _conversionCache["BPUSDT"] = (element, DateTime.Now);
+
+                    var fromCurrencyElement = element.EnumerateArray().FirstOrDefault(x => x.GetProperty("code").GetString() == maybeNonUSD);
+                    if (fromCurrencyElement != null)
+                    {
+                        if (USDisFrom)
+                        {
+                            return 1 / fromCurrencyElement.GetProperty("rate").GetDouble();
+                        }
+                        else
+                        {
+                            return fromCurrencyElement.GetProperty("rate").GetDouble();
+                        }
+                    }
+                }
+            }
+
+            if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Failed from BitPay, trying fallback", GetType());
+
             if (_conversionCache.TryGetValue(fromCurrency, out var cachedData) &&
                 cachedData.Timestamp > DateTime.Now.AddHours(-CacheExpirationHours))
             {
@@ -143,7 +200,7 @@ namespace Community.PowerToys.Run.Plugin.CurrencyConverter
                 throw new Exception($"{toCurrency.ToUpper()} is not a valid currency");
             }
 
-            if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Trying to fetch", GetType());
+            if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Trying to fetch via CurrencyAPI", GetType());
 
             var url = $"https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/{fromCurrency}.min.json";
             var response = _httpClient.GetAsync(url).Result;
@@ -168,7 +225,7 @@ namespace Community.PowerToys.Run.Plugin.CurrencyConverter
 
                     if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Fetched from fallback", GetType());
                 }
-            } 
+            }
             else
             {
                 if (EnableLog) Log.Info("Converting from: " + fromCurrency + " to: " + toCurrency + " | Fetched from API", GetType());
@@ -332,7 +389,8 @@ namespace Community.PowerToys.Run.Plugin.CurrencyConverter
                 if (expression[i] >= '0' && expression[i] <= '9')
                 {
                     StringBuilder sbuf = new StringBuilder();
-                    while (i < expression.Length && ((expression[i] >= '0' && expression[i] <= '9') || expression.Substring(i, separator.Length) == separator || char.IsWhiteSpace(expression[i]))) {
+                    while (i < expression.Length && ((expression[i] >= '0' && expression[i] <= '9') || expression.Substring(i, separator.Length) == separator || char.IsWhiteSpace(expression[i])))
+                    {
                         if (!char.IsWhiteSpace(expression[i]))
                             sbuf.Append(expression[i]);
                         i += expression.Substring(i, separator.Length) == separator ? separator.Length : 1;
@@ -469,7 +527,7 @@ namespace Community.PowerToys.Run.Plugin.CurrencyConverter
 
             string fromCurrency = match.Groups["from"].Value.Trim().ToLower();
             string toCurrency = string.IsNullOrEmpty(match.Groups["to"].Value.Trim()) ? "" : match.Groups["to"].Value.Trim().ToLower();
-            if (EnableLog) Log.Info("from: " +  fromCurrency + " and to: " + toCurrency, GetType());
+            if (EnableLog) Log.Info("from: " + fromCurrency + " and to: " + toCurrency, GetType());
 
             return GetConversionResults(isGlobal, amountToConvert, fromCurrency, toCurrency);
         }
