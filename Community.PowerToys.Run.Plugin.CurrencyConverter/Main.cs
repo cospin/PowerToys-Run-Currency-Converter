@@ -506,7 +506,7 @@ namespace Community.PowerToys.Run.Plugin.CurrencyConverter
         {
             var match = Regex.Match(search.Trim(), @"^\s*(?:(?:(?<amount>[\d.,+\-*/\s\(\)]+)\s*(?<from>[\p{L}\p{Sc}_]*))|(?:(?<from>[\p{L}\p{Sc}_]*)\s*(?<amount>[\d.,+\-*/\s\(\)]+)))\s*(?:to|in)?\s*(?<to>[\p{L}\p{Sc}_]*)\s*$");
 
-            if (!match.Success)
+            if (!match.Success || string.IsNullOrEmpty(match.Groups["from"].Value.Trim()))
             {
                 return new List<Result>();
             }
@@ -534,6 +534,8 @@ namespace Community.PowerToys.Run.Plugin.CurrencyConverter
 
             string fromCurrency = match.Groups["from"].Value.Trim().ToLower();
             string toCurrency = string.IsNullOrEmpty(match.Groups["to"].Value.Trim()) ? "" : match.Groups["to"].Value.Trim().ToLower();
+
+
             if (EnableLog) Log.Info("from: " + fromCurrency + " and to: " + toCurrency, GetType());
 
             return GetConversionResults(isGlobal, amountToConvert, fromCurrency, toCurrency);
